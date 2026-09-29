@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 
@@ -635,66 +634,59 @@ function checkBox(id) {
   const box = normalizeBoxId(id);
 
   if (!box) {
-    showModal(
-      'Box ID Missing',
-      'The QR does not contain a valid Box ID.',
-      '⚠️'
-    );
+    showModal('Box ID Missing',
+      'The QR does not contain a valid Box ID.', '⚠️');
     return;
   }
 
   selectedBoxId = box;
   updateStatus('Checking…');
 
-  google.script.run
-    .withSuccessHandler(function(result) {
+  const requestId = makeRequestId();
+  const params = new URLSearchParams({
+    api: 'getBox',
+    box: box,
+    requestId: requestId
+  });
+
+  waitForBridgeResult(requestId, 'boxResult', 12000)
+    .then(function(result) {
 
       if (!result || !result.exists) {
         selectedBoxId = '';
-
         showModal(
           'Box Not Found',
           'Box ID ' + box +
           ' is not present in BOX_MASTER. Please check the QR/Box Master list.',
           '⚠️'
         );
-
         updateStatus('Box Not Found');
         return;
       }
 
       selectedBoxId = box;
-
       document.getElementById('boxId').textContent = box;
-      document.getElementById('boxDetected')
-        .classList.remove('hidden');
-
-      document.getElementById('boxForm')
-        .classList.remove('hidden');
+      document.getElementById('boxDetected').classList.remove('hidden');
+      document.getElementById('boxForm').classList.remove('hidden');
 
       selectAction('Physically Verified');
       resetPhotoOnly();
-
       updateStatus('Box Ready');
 
-      window.scrollTo({
-        top:0,
-        behavior:'smooth'
-      });
+      window.scrollTo({ top:0, behavior:'smooth' });
 
     })
-    .withFailureHandler(function(error) {
+    .catch(function(error) {
       selectedBoxId = '';
-
       updateStatus('Check Failed');
-
       showModal(
         'Unable to Check Box',
         getErrorMessage(error),
         '⚠️'
       );
-    })
-    .getBox(box);
+    });
+
+  openBridgeGet(params);
 }
 
 function selectAction(action) {
@@ -894,18 +886,16 @@ function saveMovement() {
       photoData: photoData
     };
 
-    google.script.run
-      .withSuccessHandler(function(result) {
+    const requestId = makeRequestId();
+
+    waitForBridgeResult(requestId, 'movementResult', 30000)
+      .then(function(result) {
 
         saveBusy = false;
-
         button.disabled = false;
-        button.textContent =
-          '✓ Save Movement to Google Sheet';
+        button.textContent = '✓ Save Movement to Google Sheet';
 
-        if (!result ||
-            result.status !== 'Success') {
-
+        if (!result || result.status !== 'Success') {
           updateStatus('Save Failed');
 
           showModal(
@@ -915,15 +905,11 @@ function saveMovement() {
               : 'The movement could not be saved.',
             '⚠️'
           );
-
           return;
         }
 
         sessionCount++;
-
-        document.getElementById('sessionCount')
-          .textContent = sessionCount;
-
+        document.getElementById('sessionCount').textContent = sessionCount;
         updateStatus('Saved ✓');
 
         showModal(
@@ -936,14 +922,11 @@ function saveMovement() {
         resetForNextBox();
 
       })
-      .withFailureHandler(function(error) {
+      .catch(function(error) {
 
         saveBusy = false;
-
         button.disabled = false;
-        button.textContent =
-          '✓ Save Movement to Google Sheet';
-
+        button.textContent = '✓ Save Movement to Google Sheet';
         updateStatus('Save Failed');
 
         showModal(
@@ -951,9 +934,10 @@ function saveMovement() {
           getErrorMessage(error),
           '⚠️'
         );
-      })
-      .processMovement(payload);
-  });
+      });
+
+    submitBridgePost(requestId, payload);
+
 }
 
 function getLocation(callback) {
@@ -1072,6 +1056,121 @@ function showModal(title,text,icon) {
 function closeModal() {
   document.getElementById('modal')
     .classList.add('hidden');
+}
+
+
+/*
+ * GitHub Pages -> Google Apps Script bridge.
+ * Uses a hidden iframe/form so no CORS-enabled fetch is required.
+ */
+
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbznTxGHEqlP6jEnlKC3O1HlGgdKv-lkcCQ9lPvQgxMGFS5mY1XK9OZ_q882Bw-jQkpI/exec';
+const bridgeRequests = {};
+
+window.addEventListener('message', function(event) {
+  if (
+    event.origin !== 'https://script.google.com' &&
+    event.origin !== 'https://script.googleusercontent.com'
+  ) return;
+
+  const data = event.data;
+  if (!data || !data.requestId) return;
+
+  const pending = bridgeRequests[data.requestId];
+  if (!pending || data.type !== pending.type) return;
+
+  clearTimeout(pending.timer);
+  delete bridgeRequests[data.requestId];
+
+  if (data.result && data.result.status === 'Error') {
+    pending.reject(data.result);
+  } else {
+    pending.resolve(data.result);
+  }
+});
+
+function makeRequestId() {
+  return 'REQ_' + Date.now() + '_' +
+    Math.random().toString(36).substring(2, 10);
+}
+
+function waitForBridgeResult(requestId, type, timeoutMs) {
+  return new Promise(function(resolve, reject) {
+    const timer = setTimeout(function() {
+      delete bridgeRequests[requestId];
+      reject(new Error(
+        'The server did not respond. Please check your internet connection and try again.'
+      ));
+    }, timeoutMs);
+
+    bridgeRequests[requestId] = {
+      type: type,
+      resolve: resolve,
+      reject: reject,
+      timer: timer
+    };
+  });
+}
+
+function openBridgeGet(params) {
+  const iframeName = 'bridge_get_' + Date.now();
+  const iframe = document.createElement('iframe');
+
+  iframe.name = iframeName;
+  iframe.style.display = 'none';
+  iframe.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(iframe);
+
+  iframe.src = APPS_SCRIPT_URL + '?' + params.toString();
+
+  setTimeout(function() {
+    try { iframe.remove(); } catch (e) {}
+  }, 15000);
+}
+
+function submitBridgePost(requestId, payload) {
+  const iframeName = 'bridge_post_' + Date.now();
+  const iframe = document.createElement('iframe');
+
+  iframe.name = iframeName;
+  iframe.style.display = 'none';
+  iframe.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(iframe);
+
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = APPS_SCRIPT_URL;
+  form.target = iframeName;
+  form.style.display = 'none';
+
+  const fields = {
+    requestId: requestId,
+    boxId: payload.boxId || '',
+    empCode: payload.empCode || '',
+    action: payload.action || '',
+    toBranch: payload.toBranch || '',
+    latitude: payload.latitude ?? '',
+    longitude: payload.longitude ?? '',
+    photoData: payload.photoData || ''
+  };
+
+  Object.keys(fields).forEach(function(key) {
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = key;
+    input.value = fields[key];
+    form.appendChild(input);
+  });
+
+  document.body.appendChild(form);
+  form.submit();
+
+  setTimeout(function() {
+    try {
+      form.remove();
+      iframe.remove();
+    } catch (e) {}
+  }, 35000);
 }
 
 function getErrorMessage(error) {
