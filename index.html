@@ -1083,16 +1083,24 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbznTxGHEqlP6jEn
 const bridgeRequests = {};
 
 window.addEventListener('message', function(event) {
-  if (
-    event.origin !== 'https://script.google.com' &&
-    event.origin !== 'https://script.googleusercontent.com'
-  ) return;
-
   const data = event.data;
   if (!data || !data.requestId) return;
 
   const pending = bridgeRequests[data.requestId];
   if (!pending || data.type !== pending.type) return;
+
+  const knownOrigin =
+    event.origin === 'https://script.google.com' ||
+    event.origin === 'https://script.googleusercontent.com';
+
+  // Apps Script HTML Service can run inside a sandboxed iframe where the
+  // browser reports the child origin as "null".  We therefore also verify
+  // the exact iframe window that belongs to this request.
+  const sourceMatches =
+    !!pending.source && event.source === pending.source;
+
+  if (!knownOrigin && !sourceMatches) return;
+  if (pending.source && !sourceMatches) return;
 
   clearTimeout(pending.timer);
   delete bridgeRequests[data.requestId];
@@ -1122,7 +1130,8 @@ function waitForBridgeResult(requestId, type, timeoutMs) {
       type: type,
       resolve: resolve,
       reject: reject,
-      timer: timer
+      timer: timer,
+      source: null
     };
   });
 }
@@ -1135,6 +1144,11 @@ function openBridgeGet(params) {
   iframe.style.display = 'none';
   iframe.setAttribute('aria-hidden', 'true');
   document.body.appendChild(iframe);
+
+  const requestId = params.get('requestId');
+  if (requestId && bridgeRequests[requestId]) {
+    bridgeRequests[requestId].source = iframe.contentWindow;
+  }
 
   iframe.src = APPS_SCRIPT_URL + '?' + params.toString();
 
@@ -1151,6 +1165,10 @@ function submitBridgePost(requestId, payload) {
   iframe.style.display = 'none';
   iframe.setAttribute('aria-hidden', 'true');
   document.body.appendChild(iframe);
+
+  if (requestId && bridgeRequests[requestId]) {
+    bridgeRequests[requestId].source = iframe.contentWindow;
+  }
 
   const form = document.createElement('form');
   form.method = 'POST';
