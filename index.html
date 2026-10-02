@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 
@@ -448,14 +449,8 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function startApp() {
-  const empInput = document.getElementById('empCode');
-
-  if (!empInput) {
-    alert('Employee input not found.');
-    return;
-  }
-
-  const emp = empInput.value.trim().toUpperCase();
+  const emp = document.getElementById('empCode')
+    .value.trim().toUpperCase();
 
   if (!emp) {
     showModal(
@@ -469,14 +464,8 @@ function startApp() {
   employeeCode = emp;
 
   document.getElementById('displayEmp').textContent = emp;
-
-  document.getElementById('setupScreen')
-    .classList.add('hidden');
-
-  document.getElementById('mainScreen')
-    .classList.remove('hidden');
-
-  updateStatus('Ready');
+  document.getElementById('setupScreen').classList.add('hidden');
+  document.getElementById('mainScreen').classList.remove('hidden');
 
   if (INITIAL_BOX_ID) {
     checkBox(INITIAL_BOX_ID);
@@ -484,6 +473,7 @@ function startApp() {
     startScanner();
   }
 }
+
 function startScanner() {
   if (!employeeCode) {
     showModal(
@@ -660,101 +650,55 @@ function checkBox(id) {
   selectedBoxId = box;
   updateStatus('Checking…');
 
-  const callbackName = 'celsureBoxCallback_' +
-    Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+  google.script.run
+    .withSuccessHandler(function(result) {
 
-  let finished = false;
+      if (!result || !result.exists) {
+        selectedBoxId = '';
 
-  function finishCleanup() {
-    try {
-      delete window[callbackName];
-    } catch (e) {
-      window[callbackName] = undefined;
-    }
-    if (script && script.parentNode) {
-      script.parentNode.removeChild(script);
-    }
-    clearTimeout(timeout);
-  }
+        showModal(
+          'Box Not Found',
+          'Box ID ' + box +
+          ' is not present in BOX_MASTER. Please check the QR/Box Master list.',
+          '⚠️'
+        );
 
-  window[callbackName] = function(result) {
-    finished = true;
-    finishCleanup();
+        updateStatus('Box Not Found');
+        return;
+      }
 
-    if (!result || result.status === 'Error') {
+      selectedBoxId = box;
+
+      document.getElementById('boxId').textContent = box;
+      document.getElementById('boxDetected')
+        .classList.remove('hidden');
+
+      document.getElementById('boxForm')
+        .classList.remove('hidden');
+
+      selectAction('Physically Verified');
+      resetPhotoOnly();
+
+      updateStatus('Box Ready');
+
+      window.scrollTo({
+        top:0,
+        behavior:'smooth'
+      });
+
+    })
+    .withFailureHandler(function(error) {
       selectedBoxId = '';
+
       updateStatus('Check Failed');
+
       showModal(
         'Unable to Check Box',
-        result && result.message
-          ? result.message
-          : 'The server could not check this Box ID.',
+        getErrorMessage(error),
         '⚠️'
       );
-      return;
-    }
-
-    if (!result.exists) {
-      selectedBoxId = '';
-      showModal(
-        'Box Not Found',
-        'Box ID ' + box +
-        ' is not present in BOX_MASTER. Please check the QR/Box Master list.',
-        '⚠️'
-      );
-      updateStatus('Box Not Found');
-      return;
-    }
-
-    selectedBoxId = box;
-    document.getElementById('boxId').textContent = box;
-    document.getElementById('boxDetected').classList.remove('hidden');
-    document.getElementById('boxForm').classList.remove('hidden');
-
-    selectAction('Physically Verified');
-    resetPhotoOnly();
-    updateStatus('Box Ready');
-
-    window.scrollTo({
-      top: 0,
-      behavior: 'smooth'
-    });
-  };
-
-  const script = document.createElement('script');
-  const timeout = setTimeout(function() {
-    if (finished) return;
-    finished = true;
-    finishCleanup();
-    selectedBoxId = '';
-    updateStatus('Check Failed');
-    showModal(
-      'Unable to Check Box',
-      'The server did not respond. Please try again.',
-      '⚠️'
-    );
-  }, 12000);
-
-  script.src = APPS_SCRIPT_URL +
-    '?api=getBox' +
-    '&box=' + encodeURIComponent(box) +
-    '&callback=' + encodeURIComponent(callbackName) +
-    '&_=' + Date.now();
-
-  script.onerror = function() {
-    if (finished) return;
-    finished = true;
-    finishCleanup();
-    selectedBoxId = '';
-    updateStatus('Check Failed');
-    showModal(
-      'Unable to Check Box',
-      'Could not connect to the tracking server. Please try again.',
-      '⚠️'
-    );
-  };
-
-  document.head.appendChild(script);
+    })
+    .getBox(box);
 }
 
 function selectAction(action) {
@@ -954,16 +898,18 @@ function saveMovement() {
       photoData: photoData
     };
 
-    const requestId = makeRequestId();
-
-    waitForBridgeResult(requestId, 'movementResult', 30000)
-      .then(function(result) {
+    google.script.run
+      .withSuccessHandler(function(result) {
 
         saveBusy = false;
-        button.disabled = false;
-        button.textContent = '✓ Save Movement to Google Sheet';
 
-        if (!result || result.status !== 'Success') {
+        button.disabled = false;
+        button.textContent =
+          '✓ Save Movement to Google Sheet';
+
+        if (!result ||
+            result.status !== 'Success') {
+
           updateStatus('Save Failed');
 
           showModal(
@@ -973,11 +919,15 @@ function saveMovement() {
               : 'The movement could not be saved.',
             '⚠️'
           );
+
           return;
         }
 
         sessionCount++;
-        document.getElementById('sessionCount').textContent = sessionCount;
+
+        document.getElementById('sessionCount')
+          .textContent = sessionCount;
+
         updateStatus('Saved ✓');
 
         showModal(
@@ -990,11 +940,14 @@ function saveMovement() {
         resetForNextBox();
 
       })
-      .catch(function(error) {
+      .withFailureHandler(function(error) {
 
         saveBusy = false;
+
         button.disabled = false;
-        button.textContent = '✓ Save Movement to Google Sheet';
+        button.textContent =
+          '✓ Save Movement to Google Sheet';
+
         updateStatus('Save Failed');
 
         showModal(
@@ -1002,9 +955,8 @@ function saveMovement() {
           getErrorMessage(error),
           '⚠️'
         );
-      });
-
-    submitBridgePost(requestId, payload);
+      })
+      .processMovement(payload);
   });
 }
 
@@ -1124,139 +1076,6 @@ function showModal(title,text,icon) {
 function closeModal() {
   document.getElementById('modal')
     .classList.add('hidden');
-}
-
-
-/*
- * GitHub Pages -> Google Apps Script bridge.
- * Uses a hidden iframe/form so no CORS-enabled fetch is required.
- */
-
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbznTxGHEqlP6jEnlKC3O1HlGgdKv-lkcCQ9lPvQgxMGFS5mY1XK9OZ_q882Bw-jQkpI/exec';
-const bridgeRequests = {};
-
-window.addEventListener('message', function(event) {
-  const data = event.data;
-  if (!data || !data.requestId) return;
-
-  const pending = bridgeRequests[data.requestId];
-  if (!pending || data.type !== pending.type) return;
-
-  const knownOrigin =
-    event.origin === 'https://script.google.com' ||
-    event.origin === 'https://script.googleusercontent.com';
-
-  // Apps Script HTML Service can run inside a sandboxed iframe where the
-  // browser reports the child origin as "null".  We therefore also verify
-  // the exact iframe window that belongs to this request.
-  const sourceMatches =
-    !!pending.source && event.source === pending.source;
-
-  if (!knownOrigin && !sourceMatches) return;
-  if (pending.source && !sourceMatches) return;
-
-  clearTimeout(pending.timer);
-  delete bridgeRequests[data.requestId];
-
-  if (data.result && data.result.status === 'Error') {
-    pending.reject(data.result);
-  } else {
-    pending.resolve(data.result);
-  }
-});
-
-function makeRequestId() {
-  return 'REQ_' + Date.now() + '_' +
-    Math.random().toString(36).substring(2, 10);
-}
-
-function waitForBridgeResult(requestId, type, timeoutMs) {
-  return new Promise(function(resolve, reject) {
-    const timer = setTimeout(function() {
-      delete bridgeRequests[requestId];
-      reject(new Error(
-        'The server did not respond. Please check your internet connection and try again.'
-      ));
-    }, timeoutMs);
-
-    bridgeRequests[requestId] = {
-      type: type,
-      resolve: resolve,
-      reject: reject,
-      timer: timer,
-      source: null
-    };
-  });
-}
-
-function openBridgeGet(params) {
-  const iframeName = 'bridge_get_' + Date.now();
-  const iframe = document.createElement('iframe');
-
-  iframe.name = iframeName;
-  iframe.style.display = 'none';
-  iframe.setAttribute('aria-hidden', 'true');
-  document.body.appendChild(iframe);
-
-  const requestId = params.get('requestId');
-  if (requestId && bridgeRequests[requestId]) {
-    bridgeRequests[requestId].source = iframe.contentWindow;
-  }
-
-  iframe.src = APPS_SCRIPT_URL + '?' + params.toString();
-
-  setTimeout(function() {
-    try { iframe.remove(); } catch (e) {}
-  }, 15000);
-}
-
-function submitBridgePost(requestId, payload) {
-  const iframeName = 'bridge_post_' + Date.now();
-  const iframe = document.createElement('iframe');
-
-  iframe.name = iframeName;
-  iframe.style.display = 'none';
-  iframe.setAttribute('aria-hidden', 'true');
-  document.body.appendChild(iframe);
-
-  if (requestId && bridgeRequests[requestId]) {
-    bridgeRequests[requestId].source = iframe.contentWindow;
-  }
-
-  const form = document.createElement('form');
-  form.method = 'POST';
-  form.action = APPS_SCRIPT_URL;
-  form.target = iframeName;
-  form.style.display = 'none';
-
-  const fields = {
-    requestId: requestId,
-    boxId: payload.boxId || '',
-    empCode: payload.empCode || '',
-    action: payload.action || '',
-    toBranch: payload.toBranch || '',
-    latitude: payload.latitude ?? '',
-    longitude: payload.longitude ?? '',
-    photoData: payload.photoData || ''
-  };
-
-  Object.keys(fields).forEach(function(key) {
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = key;
-    input.value = fields[key];
-    form.appendChild(input);
-  });
-
-  document.body.appendChild(form);
-  form.submit();
-
-  setTimeout(function() {
-    try {
-      form.remove();
-      iframe.remove();
-    } catch (e) {}
-  }, 35000);
 }
 
 function getErrorMessage(error) {
