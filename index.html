@@ -238,9 +238,9 @@
              placeholder="e.g. EMP102">
     </div>
 
-    <button class="button primary section"
-            type="button"
-            onclick="startApp()">
+    <button id="continueButton"
+            class="button primary section"
+            type="button">
       Continue →
     </button>
   </section>
@@ -435,6 +435,10 @@ let saveBusy = false;
 let qrScanner = null;
 let scannerRunning = false;
 let scanLocked = false;
+
+document.getElementById('continueButton').addEventListener('click', function () {
+  startApp();
+});
 
 document.addEventListener('DOMContentLoaded', function() {
   if (INITIAL_BOX_ID) {
@@ -948,7 +952,7 @@ function saveMovement() {
       });
 
     submitBridgePost(requestId, payload);
-
+  });
 }
 
 function getLocation(callback) {
