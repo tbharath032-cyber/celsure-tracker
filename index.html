@@ -649,59 +649,112 @@ function checkBox(id) {
   const box = normalizeBoxId(id);
 
   if (!box) {
-    showModal('Box ID Missing',
-      'The QR does not contain a valid Box ID.', '⚠️');
+    showModal(
+      'Box ID Missing',
+      'The QR does not contain a valid Box ID.',
+      '⚠️'
+    );
     return;
   }
 
   selectedBoxId = box;
   updateStatus('Checking…');
 
-  const requestId = makeRequestId();
-  const params = new URLSearchParams({
-    api: 'getBox',
-    box: box,
-    requestId: requestId
-  });
+  const callbackName = 'celsureBoxCallback_' +
+    Date.now() + '_' + Math.random().toString(36).slice(2, 7);
 
-  waitForBridgeResult(requestId, 'boxResult', 12000)
-    .then(function(result) {
+  let finished = false;
 
-      if (!result || !result.exists) {
-        selectedBoxId = '';
-        showModal(
-          'Box Not Found',
-          'Box ID ' + box +
-          ' is not present in BOX_MASTER. Please check the QR/Box Master list.',
-          '⚠️'
-        );
-        updateStatus('Box Not Found');
-        return;
-      }
+  function finishCleanup() {
+    try {
+      delete window[callbackName];
+    } catch (e) {
+      window[callbackName] = undefined;
+    }
+    if (script && script.parentNode) {
+      script.parentNode.removeChild(script);
+    }
+    clearTimeout(timeout);
+  }
 
-      selectedBoxId = box;
-      document.getElementById('boxId').textContent = box;
-      document.getElementById('boxDetected').classList.remove('hidden');
-      document.getElementById('boxForm').classList.remove('hidden');
+  window[callbackName] = function(result) {
+    finished = true;
+    finishCleanup();
 
-      selectAction('Physically Verified');
-      resetPhotoOnly();
-      updateStatus('Box Ready');
-
-      window.scrollTo({ top:0, behavior:'smooth' });
-
-    })
-    .catch(function(error) {
+    if (!result || result.status === 'Error') {
       selectedBoxId = '';
       updateStatus('Check Failed');
       showModal(
         'Unable to Check Box',
-        getErrorMessage(error),
+        result && result.message
+          ? result.message
+          : 'The server could not check this Box ID.',
         '⚠️'
       );
-    });
+      return;
+    }
 
-  openBridgeGet(params);
+    if (!result.exists) {
+      selectedBoxId = '';
+      showModal(
+        'Box Not Found',
+        'Box ID ' + box +
+        ' is not present in BOX_MASTER. Please check the QR/Box Master list.',
+        '⚠️'
+      );
+      updateStatus('Box Not Found');
+      return;
+    }
+
+    selectedBoxId = box;
+    document.getElementById('boxId').textContent = box;
+    document.getElementById('boxDetected').classList.remove('hidden');
+    document.getElementById('boxForm').classList.remove('hidden');
+
+    selectAction('Physically Verified');
+    resetPhotoOnly();
+    updateStatus('Box Ready');
+
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth'
+    });
+  };
+
+  const script = document.createElement('script');
+  const timeout = setTimeout(function() {
+    if (finished) return;
+    finished = true;
+    finishCleanup();
+    selectedBoxId = '';
+    updateStatus('Check Failed');
+    showModal(
+      'Unable to Check Box',
+      'The server did not respond. Please try again.',
+      '⚠️'
+    );
+  }, 12000);
+
+  script.src = APPS_SCRIPT_URL +
+    '?api=getBox' +
+    '&box=' + encodeURIComponent(box) +
+    '&callback=' + encodeURIComponent(callbackName) +
+    '&_=' + Date.now();
+
+  script.onerror = function() {
+    if (finished) return;
+    finished = true;
+    finishCleanup();
+    selectedBoxId = '';
+    updateStatus('Check Failed');
+    showModal(
+      'Unable to Check Box',
+      'Could not connect to the tracking server. Please try again.',
+      '⚠️'
+    );
+  };
+
+  document.head.appendChild(script);
 }
 
 function selectAction(action) {
